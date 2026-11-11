@@ -16,8 +16,8 @@ import {
 import { cn } from "@/lib/utils";
 import { SquircleSearch } from "@/components/ui/SquircleSearch";
 import type { NoteWithCourse } from "@/types";
-import { getAllNotes, updateNote, deleteNote } from "@/lib/store";
-import { NoteEditor } from "@/components/course-detail/NoteEditor";
+import { getAllNotes, deleteNote } from "@/lib/store";
+import { SavedNoteEditor } from "@/components/course-detail/SavedNoteEditor";
 import { EASE_OUT, SNAPPY } from "@/lib/constants";
 
 type SortField = "updated" | "created" | "course";
@@ -95,15 +95,6 @@ export function Notes({ className }: NotesProps) {
 
     return result;
   }, [notes, courseFilter, search, sortField, sortDir]);
-
-  const handleEdit = useCallback(
-    async (noteId: number, content: string) => {
-      await updateNote(noteId, content);
-      setEditingNoteId(null);
-      await reload();
-    },
-    [reload],
-  );
 
   const handleDelete = useCallback(
     async (noteId: number) => {
@@ -269,12 +260,9 @@ export function Notes({ className }: NotesProps) {
               }}
             >
               {editingNoteId === note.id ? (
-                <NoteEditor
-                  videoTime={0}
-                  initialContent={note.content}
-                  onSubmit={(content) => handleEdit(note.id, content)}
-                  onCancel={() => setEditingNoteId(null)}
-                />
+                <SavedNoteEditor note={note} courseId={note.courseId} lessonId={note.lessonId} lessonTitle={note.lessonTitle}
+                  videoTime={0} onSaved={saved => setNotes(prev => prev.map(n => n.id === saved.id ? { ...n, ...saved } : n))}
+                  onClose={() => setEditingNoteId(null)} />
               ) : (
                 <NoteItem
                   note={note}

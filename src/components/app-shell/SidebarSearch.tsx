@@ -23,12 +23,16 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchGeneration = useRef(0);
+  const [searchError, setSearchError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigate = useNavigate();
 
   const openModal = useCallback(() => setOpen(true), []);
 
   const closeModal = useCallback(() => {
+    searchGeneration.current++;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setOpen(false);
     setQuery("");
     setResults([]);
@@ -46,7 +50,8 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (
-        e.key === "/" &&
+        (e.key === "/" || ((e.metaKey || e.ctrlKey) && e.key === "k")) &&
+        !(e.target instanceof HTMLElement && e.target.isContentEditable) &&
         !(e.target instanceof HTMLInputElement) &&
         !(e.target instanceof HTMLTextAreaElement)
       ) {
@@ -58,29 +63,26 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [openModal]);
 
-  const runSearch = useCallback((q: string) => {
-    if (!q.trim()) {
-      setResults([]);
-      setActiveIndex(-1);
-      return;
-    }
-    searchContent(q).then((res) => {
-      setResults(res);
-      setActiveIndex(-1);
-    });
+  const runSearch = useCallback((q: string, generation: number) => {
+    if (!q.trim()) { setResults([]); return; }
+    searchContent(q).then(res => {
+      if (generation === searchGeneration.current) { setResults(res); setActiveIndex(-1); }
+    }).catch(() => { if (generation === searchGeneration.current) setSearchError(true); });
   }, []);
+  useEffect(() => () => { searchGeneration.current++; if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const q = e.target.value;
-    setQuery(q);
+    setQuery(q); setSearchError(false); setResults([]);
+    const generation = ++searchGeneration.current;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => runSearch(q), 200);
+    debounceRef.current = setTimeout(() => runSearch(q, generation), 200);
   };
 
   const navigateToResult = useCallback(
     (result: SearchResult) => {
-      if (result.kind === "lesson") {
-        navigate(`/course/${result.courseId}`, {
+      if (result.kind !== "course") {
+        navigate(`/course/${result.courseId}?lesson=${result.lessonId}${result.noteId ? `&note=${result.noteId}` : ""}`, {
           state: { focusLessonId: result.lessonId },
         });
       } else {
@@ -107,7 +109,7 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
   };
 
   const courseResults = results.filter((r) => r.kind === "course");
-  const lessonResults = results.filter((r) => r.kind === "lesson");
+  const lessonResults = results.filter((r) => r.kind !== "course");
   const hasResults = results.length > 0;
 
   return (
@@ -150,6 +152,7 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
       {/* Modal */}
       <div
         className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]"
+        role="dialog" aria-label="Search courses, lessons and notes" aria-modal="true" inert={!open}
         style={{ pointerEvents: open ? "auto" : "none" }}
         onPointerDown={closeModal}
       >
@@ -177,13 +180,15 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
                 value={query}
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
-                placeholder="Search courses and lessons…"
+                placeholder="Search courses, lessons and notes…"
                 className="flex-1 bg-transparent font-sans text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
               />
               {query ? (
                 <button
                   onPointerDown={(e) => {
                     e.preventDefault();
+                    searchGeneration.current++;
+                    if (debounceRef.current) clearTimeout(debounceRef.current);
                     setQuery("");
                     setResults([]);
                     setActiveIndex(-1);
@@ -252,14 +257,14 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
                       )}
                       <div className="px-4 pb-1 pt-2">
                         <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                          Lessons
+                          Lessons & notes
                         </span>
                       </div>
                       {lessonResults.map((r) => {
                         const globalIdx = results.indexOf(r);
                         return (
                           <button
-                            key={`lesson-${r.lessonId}`}
+                            key={`${r.kind}-${r.noteId ?? r.lessonId}`}
                             onPointerDown={(e) => {
                               e.preventDefault();
                               navigateToResult(r);
@@ -282,7 +287,8 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
                               />
                             </span>
                             <div className="min-w-0 flex-1">
-                              <div className="truncate font-sans text-sm">{r.lessonTitle}</div>
+                              <div className="truncate font-sans text-sm">{r.kind === "note" ? `Note · ${r.lessonTitle}` : r.lessonTitle}</div>
+                              {r.snippet && <div className="line-clamp-2 text-xs text-muted-foreground">{r.snippet.replace(/<[^>]*>/g, " ")}</div>}
                               <div className="truncate font-sans text-xs text-muted-foreground">
                                 {r.courseTitle}
                               </div>
@@ -302,7 +308,7 @@ export function SidebarSearch({ collapsed }: SidebarSearchProps) {
                 <div className="mx-4 h-px bg-border/50" />
                 <div className="px-4 py-8 text-center">
                   <p className="font-sans text-sm text-muted-foreground">
-                    No results for <span className="text-foreground">"{query}"</span>
+                    {searchError ? "Search failed. Please try again." : "No results for"} <span className="text-foreground">"{query}"</span>
                   </p>
                 </div>
               </>

@@ -1,3 +1,4 @@
+import { CourseCover } from "./CourseCover";
 import { Link, useLocation } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -48,33 +49,19 @@ function formatLastWatched(dateStr: string | null): string {
 export function CourseCard({ course, onBookmarkChange }: { course: Course; onBookmarkChange?: () => void }) {
   const location = useLocation();
   const percentage = Math.round(
-    (course.completedLessons / course.totalLessons) * 100
+    (course.totalLessons ? course.completedLessons / course.totalLessons : 0) * 100
   );
   const isFromDrive = course.folderPath.startsWith("gdrive:");
   const isFromServer = course.folderPath.startsWith("srv:");
 
   return (
-    <Link to={`/course/${course.id}?from=${encodeURIComponent(location.pathname + location.search)}`} className="block h-full">
+    <div className="block h-full">
       <div className="squircle-subtle-wrapper group relative flex h-full flex-col transition-colors">
         <div className="squircle-subtle absolute inset-0 bg-border" />
         <div className="squircle-subtle absolute inset-px bg-card transition-colors group-hover:bg-secondary" />
 
-        <div className="squircle-subtle absolute inset-0 overflow-hidden">
-          <div
-            className="relative flex h-24 items-center justify-center"
-            style={{ backgroundColor: `${course.accentColor}10` }}
-          >
-            <div
-              className="absolute inset-x-0 top-0 h-1.5"
-              style={{ backgroundColor: course.accentColor }}
-            />
-            <span
-              className="font-heading text-2xl font-bold opacity-20"
-              style={{ color: course.accentColor }}
-            >
-              {course.title.split(/[\s—-]/)[0]}
-            </span>
-          </div>
+        <div className="pointer-events-none squircle-subtle absolute inset-0 z-10 overflow-hidden">
+          <CourseCover course={course} href={`/course/${course.id}?from=${encodeURIComponent(location.pathname + location.search)}`} />
         </div>
 
         {isFromDrive && (
@@ -99,8 +86,9 @@ export function CourseCard({ course, onBookmarkChange }: { course: Course; onBoo
 
         <BookmarkButton bookmarked={course.bookmarked} courseId={course.id} onBookmarkChange={onBookmarkChange} />
 
+        <Link className="relative flex flex-1 flex-col" to={`/course/${course.id}?from=${encodeURIComponent(location.pathname + location.search)}`}>
         <Card className="relative flex flex-1 flex-col gap-0 border-0 bg-transparent py-0 shadow-none">
-          <div className="h-24 shrink-0" />
+          <div className="h-32 shrink-0" />
 
           <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-3">
             <div className="flex items-start justify-between gap-2">
@@ -147,8 +135,9 @@ export function CourseCard({ course, onBookmarkChange }: { course: Course; onBoo
             </div>
           </CardContent>
         </Card>
+        </Link>
       </div>
-    </Link>
+    </div>
   );
 }
 
@@ -171,6 +160,7 @@ function BookmarkButton({ bookmarked: initialBookmarked, courseId, onBookmarkCha
   return (
     <button
       onClick={handleClick}
+      aria-label={bookmarked ? "Remove bookmark" : "Bookmark course"}
       className={cn(
         "absolute right-3 top-3 z-10 rounded-md p-1.5 transition-colors",
         bookmarked

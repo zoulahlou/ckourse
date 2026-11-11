@@ -1,4 +1,5 @@
 mod commands;
+mod covers;
 mod db;
 mod drive_protocol;
 mod google;
@@ -57,6 +58,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             playback::prepare_local_video,
+            covers::get_course_cover,
+            covers::set_course_cover,
             commands::parse_course_folder,
             commands::import_course,
             commands::get_courses,

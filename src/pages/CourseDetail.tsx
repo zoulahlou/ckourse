@@ -49,8 +49,6 @@ import {
   deleteCourse,
   toggleBookmark,
   toggleFavorite,
-  addNote as storeAddNote,
-  updateNote as storeUpdateNote,
   deleteNote as storeDeleteNote,
 } from "@/lib/store";
 
@@ -184,6 +182,7 @@ export function CourseDetail({ className }: CourseDetailProps) {
       course={course}
       courseData={courseData}
       initialLessonId={lessonParam ? Number(lessonParam) : undefined}
+      initialNoteId={searchParams.get("note") ? Number(searchParams.get("note")) : undefined}
       backTo={fromParam}
       isVisible={isVisible}
       onDataChange={reload}
@@ -201,6 +200,7 @@ function CourseDetailInner({
   course,
   courseData,
   initialLessonId,
+  initialNoteId,
   backTo,
   isVisible,
   onDataChange,
@@ -211,6 +211,7 @@ function CourseDetailInner({
   course: Course;
   courseData: CourseDetailData;
   initialLessonId?: number;
+  initialNoteId?: number;
   backTo: string;
   isVisible: boolean;
   onDataChange: () => Promise<void>;
@@ -471,55 +472,6 @@ function CourseDetailInner({
     [activeLesson, onDataChange],
   );
 
-  async function handleAddNote(content: string) {
-    if (!activeLesson) return;
-    try {
-      const note = await storeAddNote(
-        course.id,
-        activeLesson.id,
-        activeLesson.title,
-        content,
-      );
-      setNotes((prev) => [note, ...prev]);
-      setShowEditor(false);
-    } catch (err) {
-      // Keep editor open so the user doesn't lose their content.
-      console.error("addNote failed", err);
-      reportError(err, "CourseDetail.handleAddNote", {
-        courseId: course.id,
-        lessonId: activeLesson.id,
-        contentLength: content.length,
-      });
-      toast.error("Couldn't save note", {
-        description: "Your content is still in the editor.",
-      });
-    }
-  }
-
-  async function handleEditNote(noteId: number, content: string) {
-    try {
-      await storeUpdateNote(noteId, content);
-      setNotes((prev) =>
-        prev.map((n) =>
-          n.id === noteId
-            ? { ...n, content, updatedAt: new Date().toISOString() }
-            : n,
-        ),
-      );
-      setEditingNoteId(null);
-    } catch (err) {
-      // Keep edit mode open so the user can retry.
-      console.error("updateNote failed", err);
-      reportError(err, "CourseDetail.handleEditNote", {
-        noteId,
-        contentLength: content.length,
-      });
-      toast.error("Couldn't update note", {
-        description: "Your changes weren't saved.",
-      });
-    }
-  }
-
   async function handleDeleteNote(noteId: number) {
     try {
       await storeDeleteNote(noteId);
@@ -532,6 +484,13 @@ function CourseDetailInner({
       });
     }
   }
+
+  useEffect(() => {
+    if (!initialNoteId || !notes.length) return;
+    setActiveTab("notes");
+    const timer = setTimeout(() => document.getElementById(`note-${initialNoteId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+    return () => clearTimeout(timer);
+  }, [initialNoteId, notes.length]);
 
   const handleTimestampClick = useCallback(
     (seconds: number, lessonId: number) => {
@@ -848,8 +807,8 @@ function CourseDetailInner({
                 videoTime={Math.floor(videoTime)}
                 editingNoteId={editingNoteId}
                 showEditor={showEditor}
-                onAdd={handleAddNote}
-                onEdit={handleEditNote}
+                courseId={course.id} lessonId={activeLesson.id} lessonTitle={activeLesson.title}
+                onSaved={note => setNotes(prev => [note, ...prev.filter(n => n.id !== note.id)])}
                 onDelete={handleDeleteNote}
                 onSetEditing={setEditingNoteId}
                 onSetShowEditor={setShowEditor}

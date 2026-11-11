@@ -181,6 +181,9 @@ export function Dashboard({ className }: DashboardProps) {
     return ["all" as const, ...Array.from(cats)] as (CourseCategory | "all")[];
   }, [courses]);
 
+  const resumeCourse = useMemo(() => courses.filter(c => c.lastWatched && c.status !== "completed")
+    .sort((a, b) => Date.parse(b.lastWatched!) - Date.parse(a.lastWatched!))[0], [courses]);
+
   const handleImport = () => {
     navigate("/import");
   };
@@ -217,6 +220,10 @@ export function Dashboard({ className }: DashboardProps) {
 
   return (
     <div className={cn("mx-auto max-w-6xl", className)}>
+      {resumeCourse && <button onClick={() => navigate(`/course/${resumeCourse.id}`)} className="mb-6 flex w-full items-center justify-between gap-4 rounded-xl border border-primary/25 bg-primary/10 p-5 text-left hover:bg-primary/15">
+        <div><p className="text-xs font-semibold text-primary">Continue learning</p><h2 className="mt-1 font-heading text-xl font-bold">{resumeCourse.title}</h2><p className="mt-1 text-xs text-muted-foreground">Resume your last lesson at your saved position</p></div>
+        <span className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Resume →</span>
+      </button>}
       {stats && <DashboardStatsBar stats={stats} className="mb-6" />}
 
       <div className="mb-6 flex items-center gap-3">

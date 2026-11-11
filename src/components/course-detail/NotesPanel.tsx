@@ -3,7 +3,8 @@ import {
   PencilSimpleIcon as PencilSimple,
   TrashIcon as Trash,
 } from "@phosphor-icons/react";
-import { NoteEditor } from "./NoteEditor";
+import { SavedNoteEditor } from "./SavedNoteEditor";
+import { useState, useEffect } from "react";
 import { SNAPPY } from "@/lib/constants";
 import type { Note } from "@/types";
 
@@ -12,8 +13,10 @@ interface NotesPanelProps {
   videoTime: number;
   editingNoteId: number | null;
   showEditor: boolean;
-  onAdd: (content: string) => void;
-  onEdit: (noteId: number, content: string) => void;
+  courseId: number;
+  lessonId: number;
+  lessonTitle: string;
+  onSaved: (note: Note) => void;
   onDelete: (noteId: number) => void;
   onSetEditing: (id: number | null) => void;
   onSetShowEditor: (show: boolean) => void;
@@ -25,21 +28,20 @@ export function NotesPanel({
   videoTime,
   editingNoteId,
   showEditor,
-  onAdd,
-  onEdit,
+  courseId, lessonId, lessonTitle, onSaved,
   onDelete,
   onSetEditing,
   onSetShowEditor,
   onTimestampClick,
 }: NotesPanelProps) {
+  const [query, setQuery] = useState("");
+  const [draftId, setDraftId] = useState<number | null>(null);
+  useEffect(() => { setDraftId(null); }, [showEditor, lessonId]);
   return (
     <div className="flex flex-col gap-3">
       {showEditor ? (
-        <NoteEditor
-          videoTime={videoTime}
-          onSubmit={onAdd}
-          onCancel={() => onSetShowEditor(false)}
-        />
+        <SavedNoteEditor key={lessonId} courseId={courseId} lessonId={lessonId} lessonTitle={lessonTitle}
+          videoTime={videoTime} onSaved={note => { setDraftId(note.id); onSaved(note); }} onClose={() => onSetShowEditor(false)} />
       ) : (
         <button
           onClick={() => onSetShowEditor(true)}
@@ -57,13 +59,14 @@ export function NotesPanel({
         </p>
       )}
 
-      {notes.map((note) => (
+      <input aria-label="Filter notes or tags" placeholder="Filter notes or #tags…" value={query} onChange={e => setQuery(e.target.value)} className="rounded-lg border border-border bg-transparent p-2 text-xs" />
+      {notes.filter(n => !(showEditor && n.id === draftId)).filter(n => n.content.replace(/<[^>]*>/g, " ").toLowerCase().includes(query.toLowerCase())).map((note) => (
         <NoteCard
           key={note.id}
           note={note}
           videoTime={videoTime}
           isEditing={editingNoteId === note.id}
-          onEdit={onEdit}
+          onSaved={onSaved}
           onDelete={onDelete}
           onStartEdit={() => onSetEditing(note.id)}
           onCancelEdit={() => onSetEditing(null)}
@@ -78,7 +81,7 @@ interface NoteCardProps {
   note: Note;
   videoTime: number;
   isEditing: boolean;
-  onEdit: (noteId: number, content: string) => void;
+  onSaved: (note: Note) => void;
   onDelete: (noteId: number) => void;
   onStartEdit: () => void;
   onCancelEdit: () => void;
@@ -89,7 +92,7 @@ function NoteCard({
   note,
   videoTime,
   isEditing,
-  onEdit,
+  onSaved,
   onDelete,
   onStartEdit,
   onCancelEdit,
@@ -97,12 +100,8 @@ function NoteCard({
 }: NoteCardProps) {
   if (isEditing) {
     return (
-      <NoteEditor
-        videoTime={videoTime}
-        initialContent={note.content}
-        onSubmit={(content) => onEdit(note.id, content)}
-        onCancel={onCancelEdit}
-      />
+      <SavedNoteEditor note={note} courseId={note.courseId} lessonId={note.lessonId} lessonTitle={note.lessonTitle}
+        videoTime={videoTime} onSaved={onSaved} onClose={onCancelEdit} />
     );
   }
 
@@ -114,7 +113,7 @@ function NoteCard({
 
   return (
     <div
-      className="group rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:bg-secondary/50"
+      id={`note-${note.id}`} className="group rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:bg-secondary/50"
       style={{ transitionTimingFunction: SNAPPY }}
     >
       <div className="flex items-start gap-2">

@@ -106,6 +106,8 @@ pub struct SearchResult {
     pub accent_color: String,
     pub lesson_id: Option<i64>,
     pub lesson_title: Option<String>,
+    pub note_id: Option<i64>,
+    pub snippet: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1448,12 +1450,13 @@ pub fn search_content(conn: &Connection, query: &str) -> SqlResult<Vec<SearchRes
     // Search courses
     let mut stmt = conn.prepare(
         "SELECT id, title, accent_color FROM courses
-         WHERE LOWER(title) LIKE ?1
+         WHERE LOWER(title) LIKE ?1 OR LOWER(author) LIKE ?1
          ORDER BY updated_at DESC
          LIMIT 5",
     )?;
     let course_rows = stmt.query_map(params![pattern], |row| {
         Ok(SearchResult {
+            note_id: None, snippet: None,
             kind: "course".to_string(),
             course_id: row.get(0)?,
             course_title: row.get(1)?,
@@ -1478,6 +1481,7 @@ pub fn search_content(conn: &Connection, query: &str) -> SqlResult<Vec<SearchRes
     )?;
     let lesson_rows = stmt.query_map(params![pattern], |row| {
         Ok(SearchResult {
+            note_id: None, snippet: None,
             kind: "lesson".to_string(),
             lesson_id: Some(row.get(0)?),
             lesson_title: Some(row.get(1)?),
@@ -1489,6 +1493,17 @@ pub fn search_content(conn: &Connection, query: &str) -> SqlResult<Vec<SearchRes
     for r in lesson_rows {
         results.push(r?);
     }
+
+    let mut stmt = conn.prepare(
+        "SELECT n.id, n.lesson_id, n.lesson_title, n.course_id, c.title, c.accent_color, n.content
+         FROM notes n JOIN courses c ON c.id = n.course_id
+         WHERE LOWER(n.content) LIKE ?1 ORDER BY n.updated_at DESC LIMIT 15"
+    )?;
+    for row in stmt.query_map(params![pattern], |row| Ok(SearchResult {
+        kind: "note".into(), note_id: Some(row.get(0)?), lesson_id: Some(row.get(1)?),
+        lesson_title: Some(row.get(2)?), course_id: row.get(3)?, course_title: row.get(4)?,
+        accent_color: row.get(5)?, snippet: Some(row.get(6)?),
+    }))? { results.push(row?); }
 
     Ok(results)
 }
@@ -1584,4 +1599,28 @@ pub fn count_courses_for_server(conn: &Connection, id: &str) -> SqlResult<i64> {
         params![pattern],
         |row| row.get(0),
     )
+}
+
+#[cfg(test)]
+mod library_tests {
+    use super::*;
+    #[test]
+    fn search_finds_notes_tags_authors_and_leaves_progress_intact() {
+        let dir = std::env::temp_dir().join(format!("library-test-{}", uuid::Uuid::new_v4()));
+        let conn = init_db(&dir).unwrap();
+        conn.execute("INSERT INTO courses (id,title,author,folder_path,created_at,updated_at) VALUES (1,'Training','Alice','/readonly/course','now','now')", []).unwrap();
+        conn.execute("INSERT INTO sections (id,course_id,title) VALUES (1,1,'Section')", []).unwrap();
+        conn.execute("INSERT INTO lessons (id,section_id,title,video_path,last_position,completed) VALUES (1,1,'First lesson','/readonly/course/lesson.ts',42.5,1)", []).unwrap();
+        let note = add_note(&conn, 1, 1, "First lesson", "<p>Important #nutrition</p>").unwrap();
+        toggle_bookmark(&conn, 1).unwrap();
+        assert_eq!(search_content(&conn, "nutrition").unwrap()[0].note_id, Some(note.id));
+        assert_eq!(search_content(&conn, "Alice").unwrap()[0].kind, "course");
+        assert_eq!(search_content(&conn, "First lesson").unwrap()[0].lesson_id, Some(1));
+        let lesson = &get_course_detail(&conn, 1).unwrap().unwrap().sections[0].lessons[0];
+        assert_eq!(lesson.last_position, 42.5);
+        assert!(lesson.completed);
+        assert!(get_course_by_id(&conn, 1).unwrap().unwrap().bookmarked);
+        drop(conn);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

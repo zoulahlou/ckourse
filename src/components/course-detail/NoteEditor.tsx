@@ -18,7 +18,8 @@ const TIMESTAMP_COMMIT_RE = /@(current|\d{1,2}(?::\d{2}){1,2})(?=[\s,.\-!?;:]|$)
 interface NoteEditorProps {
   videoTime: number;
   initialContent?: string;
-  onSubmit: (content: string) => void;
+  onSubmit: (content: string) => void | Promise<void>;
+  onChange?: (content: string) => void;
   onCancel?: () => void;
   className?: string;
 }
@@ -33,6 +34,7 @@ export function NoteEditor({
   videoTime,
   initialContent = "",
   onSubmit,
+  onChange,
   onCancel,
   className,
 }: NoteEditorProps) {
@@ -46,6 +48,16 @@ export function NoteEditor({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
   const [activeFormats, setActiveFormats] = useState<Set<string>>(new Set());
+
+  const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
+  const [saveError, setSaveError] = useState(false);
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const observer = new MutationObserver(() => onChangeRef.current?.(el.innerHTML));
+    observer.observe(el, { childList: true, subtree: true, characterData: true, attributes: true });
+    return () => observer.disconnect();
+  }, []);
 
   const updateActiveFormats = useCallback(() => {
     const formats = new Set<string>();
@@ -267,12 +279,14 @@ export function NoteEditor({
     updateActiveFormats();
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (isEmpty()) return;
     const html = editorRef.current?.innerHTML ?? "";
-    onSubmit(html);
-    if (editorRef.current) editorRef.current.innerHTML = "";
-    setMenu(null);
+    setSaveError(false);
+    try {
+      await onSubmit(html);
+      setMenu(null);
+    } catch { setSaveError(true); }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -352,6 +366,8 @@ export function NoteEditor({
         <div
           ref={editorRef}
           contentEditable
+          role="textbox" aria-label="Note content" aria-multiline="true"
+          onPaste={e => { e.preventDefault(); document.execCommand("insertText", false, e.clipboardData.getData("text/plain")); }}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
           data-placeholder="Write a note..."
@@ -398,6 +414,7 @@ export function NoteEditor({
       </div>
 
       <div className="flex items-center justify-end gap-1.5 border-t border-border/50 px-3 py-1.5">
+        {saveError && <span role="alert" className="mr-auto text-xs text-destructive">Save failed. Your text is still here.</span>}
         {onCancel && (
           <button
             onClick={onCancel}

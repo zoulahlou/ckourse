@@ -2,14 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ParsedCourse } from "@/types";
 
-export async function selectCourseFolder(): Promise<string | null> {
+export async function selectCourseFolders(): Promise<string[] | null> {
   const selected = await open({
     directory: true,
-    multiple: false,
+    multiple: true,
     title: "Select Course Folder",
   });
 
-  return selected as string | null;
+  return selected == null ? null : Array.isArray(selected) ? selected : [selected];
 }
 
 export async function parseCourseFolder(

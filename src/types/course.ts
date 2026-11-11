@@ -85,12 +85,14 @@ export interface NoteWithCourse {
 }
 
 export interface SearchResult {
-  kind: "course" | "lesson";
+  kind: "course" | "lesson" | "note";
   courseId: number;
   courseTitle: string;
   accentColor: string;
   lessonId: number | null;
   lessonTitle: string | null;
+  noteId: number | null;
+  snippet: string | null;
 }
 
 export interface FavoriteLesson {

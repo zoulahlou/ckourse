@@ -5,18 +5,30 @@ use crate::parser;
 
 #[tauri::command]
 pub async fn parse_course_folder(folder_path: String) -> Result<parser::ParsedCourse, String> {
-    let path = Path::new(&folder_path);
-    parser::parse_folder(path)
+    tauri::async_runtime::spawn_blocking(move || parser::parse_folder(Path::new(&folder_path)))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn import_course(
     state: tauri::State<'_, DbState>,
-    parsed: parser::ParsedCourse,
+    mut parsed: parser::ParsedCourse,
     config: SaveCourseInput,
 ) -> Result<i64, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    ensure_new_folder(&conn, &mut parsed)?;
     db::save_parsed_course(&conn, &parsed, &config).map_err(|e| e.to_string())
+}
+
+fn ensure_new_folder(conn: &rusqlite::Connection, parsed: &mut parser::ParsedCourse) -> Result<(), String> {
+    if let Ok(path) = Path::new(&parsed.folder_path).canonicalize() {
+        parsed.folder_path = path.to_string_lossy().into_owned();
+    }
+    let duplicate = db::get_all_courses(&conn).map_err(|e| e.to_string())?.iter().any(|c| {
+        c.folder_path == parsed.folder_path || Path::new(&c.folder_path).canonicalize().is_ok_and(|p| p.to_string_lossy() == parsed.folder_path)
+    });
+    if duplicate { return Err("This folder is already in your library. Your existing notes and progress are preserved.".into()); }
+    Ok(())
 }
 
 #[tauri::command]
@@ -137,4 +149,24 @@ pub fn search_content(
     }
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::search_content(&conn, &query).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn duplicate_folder_does_not_replace_existing_learning_data() {
+        let dir = std::env::temp_dir().join(format!("import-test-{}", uuid::Uuid::new_v4()));
+        let conn = db::init_db(&dir).unwrap();
+        let mut parsed = parser::ParsedCourse { title: "Training".into(), folder_path: dir.to_string_lossy().into(), description: None, thumbnail_path: None, sections: vec![], resources: vec![], confidence: parser::Confidence::High, confidence_reasons: vec![], total_video_count: 0 };
+        ensure_new_folder(&conn, &mut parsed).unwrap();
+        let id = db::save_parsed_course(&conn, &parsed, &db::SaveCourseInput { title: "Training".into(), author: "Author".into(), accent_color: "#fff".into(), category: "other".into() }).unwrap();
+        db::toggle_bookmark(&conn, id).unwrap();
+        parsed.folder_path.push_str("/./");
+        assert!(ensure_new_folder(&conn, &mut parsed).unwrap_err().contains("already in your library"));
+        assert_eq!(db::get_all_courses(&conn).unwrap().len(), 1);
+        assert!(db::get_course_by_id(&conn, id).unwrap().unwrap().bookmarked);
+        drop(conn);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

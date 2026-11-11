@@ -1,0 +1,30 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { ImportCourse } from "./ImportCourse";
+const mock = vi.hoisted(() => ({ select: vi.fn(), parse: vi.fn(), save: vi.fn(), courses: vi.fn(), drop: null as null | ((e: any) => void) }));
+vi.mock("@/lib/courseParser", () => ({ selectCourseFolders: mock.select, parseCourseFolder: mock.parse }));
+vi.mock("@/lib/store", () => ({ getCourses: mock.courses, importCourse: mock.save, getCustomCategories: async () => [], addCustomCategory: vi.fn(), deleteCustomCategory: vi.fn() }));
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ onDragDropEvent: async (fn: any) => { mock.drop = fn; return () => {}; } }) }));
+vi.mock("lottie-react", () => ({ default: () => null }));
+const parsed = (path: string) => ({ title: path.slice(1), folderPath: path, confidence: "high", confidenceReasons: [], totalVideoCount: 1, resources: [], sections: [{ title: "Section", order: 0, lessons: [{ title: "Lesson", order: 0, videoPath: path + "/lesson.ts", durationSecs: 60, subtitles: [], resources: [] }] }] });
+beforeEach(() => { vi.clearAllMocks(); mock.courses.mockResolvedValue([]); mock.parse.mockImplementation(async path => parsed(path)); mock.save.mockResolvedValue(1); });
+afterEach(cleanup);
+it("reviews selected folders one at a time and imports each", async () => {
+  mock.select.mockResolvedValue(["/first", "/second"]);
+  const view = render(<MemoryRouter><ImportCourse /></MemoryRouter>);
+  fireEvent.click(view.getByText("Browse Folder"));
+  await waitFor(() => expect(view.getByDisplayValue("first")).toBeTruthy());
+  fireEvent.click(view.getAllByText("Import Course").slice(-1)[0]);
+  await waitFor(() => expect(view.getByDisplayValue("second")).toBeTruthy());
+  expect(mock.save).toHaveBeenCalledTimes(1);
+  expect(mock.parse).toHaveBeenCalledWith("/second");
+});
+it("handles a native folder drop and refuses duplicate imports before scanning", async () => {
+  mock.courses.mockResolvedValue([{ folderPath: "/existing" }]);
+  const view = render(<MemoryRouter><ImportCourse /></MemoryRouter>);
+  await act(async () => mock.drop!({ payload: { type: "drop", paths: ["/existing"] } }));
+  await waitFor(() => expect(view.getByText(/already in your library/)).toBeTruthy());
+  expect(mock.parse).not.toHaveBeenCalled();
+  expect(mock.save).not.toHaveBeenCalled();
+});

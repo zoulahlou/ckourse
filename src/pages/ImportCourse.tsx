@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import LottieLib from "lottie-react";
 
@@ -43,7 +45,7 @@ import loadingAnimation from "@/assets/lotties/loading.json";
 import { cn } from "@/lib/utils";
 import { SquircleButton } from "@/components/ui/SquircleButton";
 import type { CourseCategory, ParsedCourse, ParsedSection, ParsedLesson } from "@/types";
-import { selectCourseFolder, parseCourseFolder } from "@/lib/courseParser";
+import { selectCourseFolders, parseCourseFolder } from "@/lib/courseParser";
 import {
   driveCredentialsStatus,
   driveAuthStatus,
@@ -53,7 +55,7 @@ import {
 } from "@/lib/drive";
 import { getServers, parseServerFolder, type ServerConfig } from "@/lib/servers";
 import { ServerBrowser } from "@/components/ServerBrowser";
-import { importCourse, getCustomCategories, addCustomCategory, deleteCustomCategory } from "@/lib/store";
+import { getCourses, importCourse, getCustomCategories, addCustomCategory, deleteCustomCategory } from "@/lib/store";
 import { EASE_OUT } from "@/lib/constants";
 
 function makeId() {
@@ -123,6 +125,17 @@ export function ImportCourse({ className }: ImportCourseProps) {
     getCustomCategories().then(setCustomCategories).catch(() => {});
   }, []);
 
+  const pendingPaths = useRef<string[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const dropHandler = useRef<(paths: string[]) => void>(() => {});
+  useEffect(() => {
+    const listener = getCurrentWebview().onDragDropEvent(event => {
+      if (event.payload.type === "drop") { setIsDragOver(false); dropHandler.current(event.payload.paths); }
+      else setIsDragOver(event.payload.type === "over" || event.payload.type === "enter");
+    }).catch(() => () => {});
+    return () => { void listener.then(unlisten => unlisten()).catch(() => {}); };
+  }, []);
+
   const applyParsed = (result: ParsedCourse) => {
     setParsedCourse(result);
     setStructureIds({
@@ -138,6 +151,10 @@ export function ImportCourse({ className }: ImportCourseProps) {
     showError(null);
 
     try {
+      const existing = await getCourses();
+      if (existing.some(c => c.folderPath.replace(/\/$/, "") === folderPath.replace(/\/$/, ""))) {
+        throw "This folder is already in your library. Existing notes and progress are preserved.";
+      }
       applyParsed(await parseCourseFolder(folderPath));
     } catch (err) {
       showError(typeof err === "string" ? err : "Failed to parse course folder");
@@ -146,15 +163,24 @@ export function ImportCourse({ className }: ImportCourseProps) {
     }
   };
 
+  const nextFolder = async () => {
+    const next = pendingPaths.current.shift();
+    setPendingCount(pendingPaths.current.length);
+    if (next) { setStep("select"); await handleParseCourse(next); }
+  };
+  const selectPaths = async (paths: string[]) => {
+    if (isLoading || isImporting || step !== "select" || !paths.length) return;
+    const unique = [...new Set(paths)];
+    pendingPaths.current = unique.slice(1);
+    setPendingCount(pendingPaths.current.length);
+    await handleParseCourse(unique[0]);
+  };
+  dropHandler.current = paths => { void selectPaths(paths); };
   const handleFolderSelect = async () => {
     try {
-      const folderPath = await selectCourseFolder();
-      if (folderPath) {
-        await handleParseCourse(folderPath);
-      }
-    } catch (err) {
-      showError("Failed to open folder picker");
-    }
+      const paths = await selectCourseFolders();
+      if (paths) await selectPaths(paths);
+    } catch { showError("Failed to open folder picker"); }
   };
 
   const handleDriveImport = async () => {
@@ -221,28 +247,7 @@ export function ImportCourse({ className }: ImportCourseProps) {
     }
   };
 
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-
-    const items = e.dataTransfer.items;
-    if (items.length > 0) {
-      const item = items[0];
-      if (item.kind === "file") {
-        const file = item.getAsFile();
-        if (file) {
-          // In Tauri, dropped folders/files expose a native path
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const path = (file as any).path as string | undefined;
-          if (path) {
-            await handleParseCourse(path);
-          } else {
-            showError("Could not read the dropped folder path. Try using Browse instead.");
-          }
-        }
-      }
-    }
-  };
+  const handleDrop = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); };
 
   const reorderSections = (fromIdx: number, toIdx: number) => {
     if (fromIdx === toIdx) return;
@@ -307,7 +312,9 @@ export function ImportCourse({ className }: ImportCourseProps) {
         accentColor,
         category,
       });
-      navigate(`/course/${courseId}`);
+      toast.success(`Added ${trimmedTitle}`);
+      if (pendingPaths.current.length) await nextFolder();
+      else navigate(`/course/${courseId}`);
     } catch (err) {
       showError(typeof err === "string" ? err : "Failed to import course");
     } finally {
@@ -352,11 +359,13 @@ export function ImportCourse({ className }: ImportCourseProps) {
         </h2>
         <p className="mt-2 font-sans text-sm text-muted-foreground">
           {step === "select"
-            ? "Select a folder containing your course videos to get started."
+            ? "Drop one or more course folders, or select several with Browse. Review each course before adding."
             : "Review the detected structure and configure your course details."}
         </p>
       </div>
 
+      {pendingCount > 0 && <div className="mb-4 flex items-center justify-between rounded-lg border border-border p-3 text-sm"><span>{pendingCount} more folders waiting · review each course before adding</span><button className="text-primary" disabled={isLoading || isImporting} onClick={() => void nextFolder()}>Skip to next folder →</button></div>}
+      {parseError && step === "configure" && <p role="alert" className="mb-4 text-sm text-destructive">{parseError}</p>}
       {step === "select" ? (
         <FolderSelectStep
           isDragOver={isDragOver}
@@ -439,6 +448,8 @@ function FolderSelectStep({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         className="group relative cursor-pointer transition-colors"
+        role="button" tabIndex={0} aria-label="Select course folders"
+        onKeyDown={e => { if (!isLoading && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onBrowse(); } }}
         onClick={isLoading ? undefined : onBrowse}
       >
         <div
