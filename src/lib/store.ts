@@ -174,3 +174,7 @@ export async function deleteCustomCategory(name: string): Promise<void> {
 export async function searchContent(query: string): Promise<SearchResult[]> {
   return invoke<SearchResult[]>("search_content", { query });
 }
+
+export async function relocateCourse(courseId: number, folderPath: string): Promise<string> {
+  return invoke<string>("relocate_course", { courseId, folderPath });
+}

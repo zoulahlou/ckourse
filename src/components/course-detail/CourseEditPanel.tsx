@@ -1,3 +1,4 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { useState, useEffect, useRef } from "react";
 import {
   ArrowLeftIcon as ArrowLeft,
@@ -41,6 +42,7 @@ const accentColors = [
 interface CourseEditPanelProps {
   course: Course;
   onSave: (title: string, author: string, accentColor: string, category: string) => Promise<void>;
+  onRelocate: (folder: string) => Promise<void>;
   onResetProgress: () => Promise<void>;
   onDelete: () => Promise<void>;
   onBack: () => void;
@@ -50,11 +52,17 @@ interface CourseEditPanelProps {
 export function CourseEditPanel({
   course,
   onSave,
+  onRelocate,
   onResetProgress,
   onDelete,
   onBack,
   className,
 }: CourseEditPanelProps) {
+  const [newFolder, setNewFolder] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
+  const [folderError, setFolderError] = useState("");
+  const [folderSuccess, setFolderSuccess] = useState(false);
+  const isLocal = !course.folderPath.startsWith("gdrive:") && !course.folderPath.startsWith("srv:");
   const [title, setTitle] = useState(course.title);
   const [author, setAuthor] = useState(course.author);
   const [category, setCategory] = useState<string>(course.category);
@@ -152,6 +160,25 @@ export function CourseEditPanel({
               {course.folderPath}
             </span>
           </div>
+          {isLocal && <div className="relative border-t border-border px-4 py-3">
+            <p className="mb-3 text-xs text-muted-foreground">Moved this course? Choose its new root folder with the same filenames and subfolders. Notes, bookmarks and playback positions are kept. No files are moved.</p>
+            <button disabled={moving || saving} className="rounded-md border border-border px-3 py-2 text-xs hover:bg-secondary disabled:opacity-50"
+              onClick={async () => {
+                setFolderError(""); setFolderSuccess(false);
+                try { const selected = await open({ directory: true, multiple: false, title: "Choose the new course folder" }); if (typeof selected === "string") setNewFolder(selected); }
+                catch (error) { setFolderError(String(error)); }
+              }}>Change course folder</button>
+            {newFolder && <div className="mt-3 flex flex-wrap items-center gap-3"><span className="break-all font-mono text-xs">{newFolder}</span>
+              <button disabled={moving || saving} className="rounded-md bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50"
+                onClick={async () => {
+                  setMoving(true); setFolderError("");
+                  try { await onRelocate(newFolder); setNewFolder(null); setFolderSuccess(true); }
+                  catch (error) { setFolderError(String(error)); }
+                  finally { setMoving(false); }
+                }}>{moving ? "Checking files…" : "Apply new folder"}</button></div>}
+            {folderError && <p role="alert" className="mt-2 text-xs text-destructive">{folderError}</p>}
+            {folderSuccess && <p role="status" className="mt-2 text-xs text-primary">Course reconnected. Your notes and progress are preserved.</p>}
+          </div>}
         </div>
       </div>
 

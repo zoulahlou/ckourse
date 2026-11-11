@@ -1,0 +1,31 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { CourseEditPanel } from "./CourseEditPanel";
+import type { Course } from "@/types";
+const { open } = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open }));
+vi.mock("@/lib/store", () => ({ getCustomCategories: async () => [], addCustomCategory: vi.fn(), deleteCustomCategory: vi.fn() }));
+afterEach(cleanup);
+const course: Course = { id: 1, title: "Training", author: "Alice", folderPath: "/old/course", completedLessons: 1, totalLessons: 2, status: "in-progress", accentColor: "#fff", lastWatched: null, category: "other", description: null, thumbnailPath: null, bookmarked: true };
+const actions = () => ({ onSave: vi.fn(), onResetProgress: vi.fn(), onDelete: vi.fn(), onBack: vi.fn() });
+it("shows the selected folder and applies it only after explicit validation", async () => {
+  open.mockResolvedValue("/new/course");
+  const onRelocate = vi.fn().mockResolvedValue(undefined);
+  const view = render(<CourseEditPanel course={course} onRelocate={onRelocate} {...actions()} />);
+  fireEvent.click(view.getByText("Change course folder"));
+  await waitFor(() => expect(view.getByText("/new/course")).toBeTruthy());
+  expect(onRelocate).not.toHaveBeenCalled();
+  fireEvent.click(view.getByText("Apply new folder"));
+  await waitFor(() => expect(view.getByRole("status").textContent).toContain("reconnected"));
+  expect(onRelocate).toHaveBeenCalledWith("/new/course");
+});
+it("keeps the existing folder and permits retry after missing files", async () => {
+  open.mockResolvedValue("/wrong/course");
+  const view = render(<CourseEditPanel course={course} onRelocate={vi.fn().mockRejectedValue("Video not found. No paths were changed.")} {...actions()} />);
+  fireEvent.click(view.getByText("Change course folder"));
+  await waitFor(() => expect(view.getByText("Apply new folder")).toBeTruthy());
+  fireEvent.click(view.getByText("Apply new folder"));
+  await waitFor(() => expect(view.getByRole("alert").textContent).toContain("No paths were changed"));
+  expect(view.getByText("/old/course")).toBeTruthy();
+  expect(view.getByText("Apply new folder")).toBeTruthy();
+});

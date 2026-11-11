@@ -41,3 +41,24 @@ The automatic-preview media test is explicitly run with:
 Not covered by a real Finder end-to-end test: dragging folders from Finder into
 the packaged app. The native drop event and resulting import queue are tested
 with fixtures. Existing TS preparation/WebKit tests remain in the repository.
+
+
+## Changing the course folder — 1.2.1-ts.4
+
+In Edit Course, choose **Change course folder**, select the new root, then click
+**Apply new folder**. The original folder may already be disconnected or gone.
+This reconnects the existing course; it does not move or copy any video files.
+
+Relative filenames and subfolders must stay the same. All lesson videos must be
+present, nonempty and readable in the selected folder; referenced local subtitles
+and resources must exist as well. Wrong/incomplete folders or folders already
+assigned to another course are rejected before changing anything.
+The DB updates course, lesson, subtitle and resource paths in one transaction,
+including embedded-subtitle suffixes. IDs, timestamps, notes, favorites,
+bookmarks, completion and saved playback positions stay unchanged. Chosen covers
+outside the original course directory remain in Application Support. Derived
+video/cover caches can be regenerated for the new source path.
+
+Background preparation of the next lesson is deliberately not included, as
+requested. Tests cover reconnecting a missing root, missing-video/resource
+rollback, embedded subtitles, stable learning data and the folder-selection UI.

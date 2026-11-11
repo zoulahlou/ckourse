@@ -45,6 +45,7 @@ import {
   saveLessonPosition,
   updateLessonDuration,
   updateCourse,
+  relocateCourse,
   resetCourseProgress,
   deleteCourse,
   toggleBookmark,
@@ -161,6 +162,10 @@ export function CourseDetail({ className }: CourseDetailProps) {
         course={course}
         onSave={async (title, author, accentColor, category) => {
           await updateCourse(course.id, title, author, accentColor, category);
+          await reload();
+        }}
+        onRelocate={async folder => {
+          await relocateCourse(course.id, folder);
           await reload();
         }}
         onResetProgress={async () => {

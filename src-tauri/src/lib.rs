@@ -1,5 +1,6 @@
 mod commands;
 mod covers;
+mod relocate;
 mod db;
 mod drive_protocol;
 mod google;
@@ -60,6 +61,7 @@ pub fn run() {
             playback::prepare_local_video,
             covers::get_course_cover,
             covers::set_course_cover,
+            relocate::relocate_course,
             commands::parse_course_folder,
             commands::import_course,
             commands::get_courses,
