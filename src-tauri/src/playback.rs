@@ -25,9 +25,6 @@ fn prepare(source: &Path, cache: &Path) -> Result<PathBuf, String> {
 }
 
 fn prepare_with_tools(source: &Path, cache: &Path, ffmpeg: &Path, ffprobe: &Path) -> Result<PathBuf, String> {
-    // Serialize requests, including React StrictMode/retries, and publish only
-    // complete files. No temporary file is ever placed beside the source.
-    let _guard = PREPARATION.lock().map_err(|e| e.to_string())?;
     let source = source.canonicalize().map_err(|e| format!("Cannot open source video: {e}"))?;
     if !source.is_file() || !source.extension().is_some_and(|e| e.eq_ignore_ascii_case("ts")) {
         return Err("Expected a local .ts video".into());
@@ -38,16 +35,28 @@ fn prepare_with_tools(source: &Path, cache: &Path, ffmpeg: &Path, ffprobe: &Path
     if fs::metadata(&destination).is_ok_and(|m| m.len() > 0) {
         return Ok(destination);
     }
+    // Cached lessons must not wait for an unrelated long preparation.
+    let _guard = PREPARATION.lock().map_err(|e| e.to_string())?;
+    if fs::metadata(&destination).is_ok_and(|m| m.len() > 0) {
+        return Ok(destination);
+    }
     let temporary = cache.join(format!("{key}-{}.tmp.mp4", uuid::Uuid::new_v4()));
     let probe = Command::new(ffprobe)
-        .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,pix_fmt", "-of", "json"])
+        .args(["-v", "error", "-show_entries", "stream=codec_type,codec_name,pix_fmt,profile", "-of", "json"])
         .arg(&source).output().map_err(|e| format!("Cannot inspect video: {e}"))?;
     if !probe.status.success() { return Err("Cannot inspect this transport stream".into()); }
     let info: serde_json::Value = serde_json::from_slice(&probe.stdout).map_err(|e| e.to_string())?;
-    let stream = &info["streams"][0];
+    let streams = info["streams"].as_array().ok_or("Video has no streams")?;
+    let stream = streams.iter().find(|s| s["codec_type"] == "video").ok_or("Video has no picture stream")?;
+    let copy_audio = streams.iter().find(|s| s["codec_type"] == "audio")
+        .is_some_and(|s| s["codec_name"] == "aac" && s["profile"] == "LC");
     let copy_video = stream["codec_name"] == "h264" && stream["pix_fmt"] == "yuv420p";
     let result = (|| {
-        for transcode in if copy_video { vec![false, true] } else { vec![true] } {
+        // Keep the existing audio/video encoding fallbacks if remuxing fails.
+        let attempts = if copy_video && copy_audio { vec![(false, true), (false, false), (true, false)] }
+            else if copy_video { vec![(false, false), (true, false)] }
+            else { vec![(true, false)] };
+        for (transcode, passthrough_audio) in attempts {
             let mut command = Command::new(ffmpeg);
             command.args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-fflags", "+genpts", "-i"])
                 .arg(&source)
@@ -55,8 +64,12 @@ fn prepare_with_tools(source: &Path, cache: &Path, ffmpeg: &Path, ffprobe: &Path
             if transcode {
                 command.args(["-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"]);
             } else { command.args(["-c:v", "copy"]); }
-            // AAC covers TS audio codecs unsupported by WebKit (MP2, AC3, ...).
-            command.args(["-c:a", "aac", "-b:a", "192k", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart"])
+            if passthrough_audio {
+                command.args(["-c:a", "copy", "-bsf:a", "aac_adtstoasc"]);
+            } else {
+                command.args(["-c:a", "aac", "-b:a", "192k"]);
+            }
+            command.args(["-avoid_negative_ts", "make_zero", "-movflags", "+faststart"])
                 .arg(&temporary);
             let output = command.output().map_err(|e| format!("Cannot prepare video: {e}"))?;
             if output.status.success() && fs::metadata(&temporary).is_ok_and(|m| m.len() > 0) {
@@ -110,17 +123,17 @@ mod tests {
         let bins = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
         let ffmpeg = bins.join("ffmpeg-aarch64-apple-darwin");
         let ffprobe = bins.join("ffprobe-aarch64-apple-darwin");
-        for (name, codec, audio) in [("01 H264.TS", "libx264", true), ("02 MPEG2.ts", "mpeg2video", true), ("03 silent.ts", "libx264", false)] {
+        for (name, codec, audio) in [("01 H264.TS", "libx264", Some("mp2")), ("02 MPEG2.ts", "mpeg2video", Some("mp2")), ("03 silent.ts", "libx264", None), ("04 AAC.ts", "libx264", Some("aac"))] {
             let source = course.join(name);
             let mut generator = Command::new(&ffmpeg);
             generator.args(["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25"]);
-            if audio { generator.args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"]); }
-            assert!(generator.args(["-t", "4", "-c:v", codec, "-pix_fmt", "yuv420p", "-c:a", "mp2", "-f", "mpegts"]).arg(&source).status().unwrap().success());
+            if audio.is_some() { generator.args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"]); }
+            assert!(generator.args(["-t", "4", "-c:v", codec, "-pix_fmt", "yuv420p", "-c:a", audio.unwrap_or("aac"), "-f", "mpegts"]).arg(&source).status().unwrap().success());
             fs::set_permissions(&source, fs::Permissions::from_mode(0o444)).unwrap();
         }
         fs::set_permissions(&course, fs::Permissions::from_mode(0o555)).unwrap();
         let parsed = parser::parse_folder(&course).unwrap();
-        assert_eq!(parsed.total_video_count, 3);
+        assert_eq!(parsed.total_video_count, 4);
         let conn = db::init_db(&dir.join("database")).unwrap();
         let id = db::save_parsed_course(&conn, &parsed, &db::SaveCourseInput {
             title: "TS course".into(), author: "Test".into(), accent_color: "#abcdef".into(), category: "Test".into(),
@@ -144,6 +157,20 @@ mod tests {
             assert_eq!(cached, prepare_with_tools(&source, &dir.join("cache"), &ffmpeg, &ffprobe).unwrap());
             assert_eq!(modified, fs::metadata(&cached).unwrap().modified().unwrap());
             assert_eq!(original, fs::read(&source).unwrap());
+            // A cached hit must return even while another preparation holds the lock.
+            {
+                let _busy = PREPARATION.lock().unwrap();
+                assert_eq!(cached, prepare_with_tools(&source, &dir.join("cache"), &ffmpeg, &ffprobe).unwrap());
+            }
+            if source.file_name().unwrap() == "04 AAC.ts" {
+                let audio_bytes = |path: &Path| {
+                    let result = Command::new(&ffmpeg).args(["-v", "error", "-i"]).arg(path)
+                        .args(["-map", "0:a:0", "-c:a", "copy", "-f", "adts", "-"]).output().unwrap();
+                    assert!(result.status.success());
+                    result.stdout
+                };
+                assert_eq!(audio_bytes(&source), audio_bytes(&cached), "AAC must not be reencoded");
+            }
             let probe = Command::new(&ffprobe).args(["-v", "error", "-show_streams", "-show_format", "-of", "json"]).arg(&cached).output().unwrap();
             let info: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
             assert_eq!(info["streams"][0]["codec_name"], "h264");
@@ -154,7 +181,7 @@ mod tests {
         assert_eq!(before, serde_json::to_value(db::get_course_detail(&conn, id).unwrap()).unwrap());
         assert_eq!(notes, serde_json::to_value(db::get_course_notes(&conn, id).unwrap()).unwrap());
         assert!(db::get_course_by_id(&conn, id).unwrap().unwrap().bookmarked);
-        assert_eq!(fs::read_dir(&course).unwrap().count(), 3);
+        assert_eq!(fs::read_dir(&course).unwrap().count(), 4);
         let broken = dir.join("broken.ts");
         fs::write(&broken, b"invalid video").unwrap();
         assert!(prepare_with_tools(&broken, &dir.join("bad-cache"), &ffmpeg, &ffprobe).is_err());

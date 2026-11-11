@@ -9,7 +9,7 @@ migrated or rewritten by media preparation.
 On first playback the bundled native FFmpeg prepares a seekable MP4 in
 `~/Library/Caches/com.ckourse.app/playback/`. H.264/yuv420p video is copied when
 possible, with a full H.264 fallback; other codecs are encoded as H.264/yuv420p.
-Audio is made AAC. Videos without audio are supported. The first preparation
+Compatible AAC-LC audio is copied without reencoding; other audio is made AAC. Videos without audio are supported. The first preparation
 can take time, especially for large files that require encoding; the existing
 player shows a preparation status. Playback starts when the complete file is
 ready. This is automatic background preparation, not direct TS decoding.
@@ -39,7 +39,7 @@ npm ci
 npm run build:mac-arm64
 ```
 
-This builds `1.2.1-ts.1` for `aarch64-apple-darwin` with native ffmpeg and ffprobe,
+This builds `1.2.1-ts.2` for `aarch64-apple-darwin` with native ffmpeg and ffprobe,
 checks their architecture, and emits an app and DMG under
 `src-tauri/target/aarch64-apple-darwin/release/bundle/`.
 The local configuration uses an ad-hoc signature and omits updater artifacts;
@@ -60,9 +60,9 @@ CKOURSE_KEEP_MEDIA_TESTS=1 cargo test --manifest-path src-tauri/Cargo.toml \
 swift scripts/test-webkit-playback.swift "$MEDIA_TEST_DIR/cache"
 ```
 
-The media integration test covers H.264 + MP2, MPEG-2 + MP2, silent H.264,
+The media integration test covers H.264 + MP2, MPEG-2 + MP2, silent H.264, H.264 + AAC,
 uppercase extensions, spaces/Unicode/# in paths, read-only source permissions,
-byte-identical originals, cache reuse, invalid media cleanup, timeline duration,
+byte-identical originals and copied AAC, cache reuse without waiting for another preparation, invalid media cleanup, timeline duration,
 seek/decode, and unchanged database notes/progress/bookmarks/favorites.
 Set `CKOURSE_READONLY_SOURCE` to a TS on an actual read-only mounted volume to
 also check that directory writes fail while preparation succeeds.
@@ -72,3 +72,5 @@ queued timestamp clicks, stale results after lesson changes and retry after a
 preparation failure. The Swift smoke test checks metadata, seeking and playback
 in the native macOS WKWebView for all prepared fixture MP4s. Real personal course
 files are not used or modified by these tests.
+
+Version 1.2.1-ts.2 retains valid caches from ts.1. It avoids AAC-LC reencoding and lets cached lessons bypass the preparation lock. First playback still requires a full local remux, so large files need disk I/O before playback starts.
